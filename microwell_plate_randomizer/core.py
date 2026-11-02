@@ -6,12 +6,12 @@ from pathlib import Path
 
 ROWS = "ABCDEFGH"
 COLUMNS = range(1, 13)
-GROUPS = (range(2, 5), range(5, 8), range(8, 12))
+# Extend the original outer groups to include the optional border columns.
+# Adding a water perimeter keeps the original interior sampling groups.
+GROUPS = (range(1, 5), range(5, 8), range(8, 13))
 WELLS = tuple((row, col) for row in ROWS for col in COLUMNS)
 SAMPLE_WELLS = frozenset((row, col) for row in ROWS for group in GROUPS for col in group)
-DEFAULT_LABELS = [f"{medium}-{starter}" for medium in ("92", "LB", "YPD")
-                  for starter in ("A", "B", "C")]
-DEFAULT_LABELS += ["92-Blank", "LB-Blank", "YPD-Blank"]
+DEFAULT_LABELS = [f"Sample {letter}" for letter in "ABCDEF"]
 
 
 class SearchLimitError(ValueError):
@@ -19,7 +19,18 @@ class SearchLimitError(ValueError):
 
 
 def default_water():
+    """Return the optional water perimeter; the GUI starts with no water."""
     return {(row, col) for row, col in WELLS if row in "AH" or col in (1, 12)}
+
+
+def validate_custom_marks(marks, samples):
+    """Custom reservations cannot masquerade as sample or built-in status labels."""
+    sample_names = {label.casefold() for label in samples}
+    for label in marks.values():
+        if not isinstance(label, str) or not label.strip() or '\n' in label or '\r' in label:
+            raise ValueError("Enter a non-empty, single-line custom mark.")
+        if label.strip().casefold() in {"water", "unused", "available", "excluded"} | sample_names:
+            raise ValueError(f"Custom mark '{label}' must differ from sample names and well status labels.")
 
 
 def validate_samples(samples):
@@ -42,7 +53,7 @@ def parse_samples(text):
             continue
         parts = line.rsplit(",", 1)
         if len(parts) != 2 or not parts[0].strip():
-            raise ValueError(f"Line {number}: enter a label and count, for example: LB-A, 3")
+            raise ValueError(f"Line {number}: enter a label and count, for example: Sample A, 3")
         label = parts[0].strip()
         if label in samples:
             raise ValueError(f"Line {number}: duplicate sample label '{label}'.")
@@ -54,7 +65,8 @@ def parse_samples(text):
     return samples
 
 
-def randomize_plate(seed, samples, water, excluded, *, max_steps=25000):
+def randomize_plate(seed, samples, water, excluded, *, custom_marks=None,
+                    fill_unused=False, max_steps=25000):
     """Find a seeded layout with balanced groups and distinct rows per sample.
 
     Each group gets floor(count / 3) or ceil(count / 3) replicates. The search
@@ -65,12 +77,15 @@ def randomize_plate(seed, samples, water, excluded, *, max_steps=25000):
     if type(seed) is not int:
         raise ValueError("The seed must be a whole number.")
     water, excluded = set(water), set(excluded)
-    if (water | excluded) - set(WELLS):
+    custom_marks = dict(custom_marks or {})
+    validate_custom_marks(custom_marks, samples)
+    marked = set(custom_marks)
+    if (water | excluded | marked) - set(WELLS):
         raise ValueError("Well selections must be within rows A–H and columns 1–12.")
-    if water & excluded:
-        raise ValueError("A well cannot be both Water and excluded.")
+    if water & excluded or marked & (water | excluded):
+        raise ValueError("Water, excluded, and custom-marked well selections must not overlap.")
     rng = random.Random(seed)
-    available = [well for well in WELLS if well in SAMPLE_WELLS and well not in water | excluded]
+    available = [well for well in WELLS if well in SAMPLE_WELLS and well not in water | excluded | marked]
     if sum(samples.values()) > len(available):
         raise ValueError(f"Requested {sum(samples.values())} replicates, but only {len(available)} sampling wells are available.")
     row_count = len({row for row, _ in available})
@@ -146,7 +161,11 @@ def randomize_plate(seed, samples, water, excluded, *, max_steps=25000):
 
     if not solve():
         raise ValueError("No layout satisfies the distinct-row and balanced-group rules. Free more wells or reduce replicates.")
-    return {well: "Water" if well in water else assignments.get(well, "Unused") for well in WELLS}
+    return {
+        well: ("Water" if well in water else custom_marks[well] if well in custom_marks
+               else "Unused" if well in excluded else assignments.get(well, "Water" if fill_unused else "Unused"))
+        for well in WELLS
+    }
 
 
 def export_csv(path, plate):

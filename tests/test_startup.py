@@ -10,7 +10,7 @@ class StartupTests(unittest.TestCase):
     def test_version_without_gui(self):
         result = subprocess.run([sys.executable, '-m', 'microwell_plate_randomizer', '--version'],
                                 capture_output=True, text=True, check=True)
-        self.assertIn('1.0.0', result.stdout)
+        self.assertIn('1.2.0', result.stdout)
 
     def test_legacy_launcher(self):
         result = subprocess.run([sys.executable, 'plate_randomizer_gui.py', '--help'],

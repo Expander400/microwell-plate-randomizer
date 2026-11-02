@@ -1,12 +1,6 @@
-92-A, 3
-92-B, 3
-92-C, 3
-LB-A, 3
-LB-B, 3
-LB-C, 3
-YPD-A, 3
-YPD-B, 3
-YPD-C, 3
-92-Blank, 3
-LB-Blank, 3
-YPD-Blank, 3
+Sample A, 3
+Sample B, 3
+Sample C, 3
+Sample D, 3
+Sample E, 3
+Sample F, 3

@@ -1,16 +1,18 @@
 # Microwell Plate Randomizer
 
 A lightweight desktop app for creating reproducible **96-well plate layouts**.
-Edit sample names and replicate counts, mark water or excluded wells, generate a
+Edit sample names and replicate counts, add water, blank wells or custom marks, generate a
 layout, and export it to a CSV file for Excel or other spreadsheet software.
 
 **Made with AI assistance:** the app's code, tests and documentation were written
 and revised with OpenAI Codex, based on an initial Python script and user requirements.
 
-![The app showing a randomized 96-well plate with sample settings and water borders](docs/screenshot.png)
+![The app showing generic samples, custom marks and automatic water filling](docs/screenshot.png)
 
 - Editable seed and per-sample replicate counts.
-- Clickable 8 × 12 plate with water and excluded-well selection.
+- Starts with all 96 wells available and generic Sample A–F examples.
+- One-click water perimeter, custom well marks and optional water filling for unused wells.
+- Edit empty wells after randomization without moving assigned samples.
 - Replicates spread across three column groups, with no repeated row per sample.
 - CSV export and clear explanations when a layout cannot be generated.
 - Runs locally; no account, server, or third-party Python packages required.
@@ -86,9 +88,9 @@ You can also run `sh start_mac_linux.command`.
    comma. Labels must be unique. Blank lines are ignored.
 
    ```text
-   92-A, 3
-   LB-A, 2
-   YPD-Blank, 1
+   Sample A, 3
+   Sample B, 2
+   Sample C, 1
    ```
 
 3. Select a well-editing mode, then click wells:
@@ -96,31 +98,57 @@ You can also run `sh start_mac_linux.command`.
    | Mode | What happens |
    | --- | --- |
    | Water | The well is filled with water and cannot receive a sample. |
-   | Do not randomize | The well stays empty; CSV exports it as `Unused`. |
-   | Available | Removes water/exclusion and makes the well eligible for a sample. |
+   | Do not randomize (blank) | The well stays empty; CSV exports it as `Unused`, even with automatic water filling enabled. |
+   | Available | Removes water, exclusion or a custom mark and makes the well eligible for a sample. |
+   | Custom mark | Enter text in the box (for example, `Positive control`), then click a well. It is reserved from sampling and exported with that text. |
 
-4. Click **Randomize plate**. Hover over a well, or focus it with the keyboard,
+4. Optionally click **Add water perimeter**, or check **Fill unused wells with water**
+   to fill remaining unassigned wells after samples are placed. Custom marks and
+   explicitly blank wells are preserved.
+5. Click **Randomize plate**. Hover over a well, or focus it with the keyboard,
    to see its complete label below the plate.
-5. Click **Export CSV** to save the layout. The CSV has a `Row` column and columns
+6. Click **Export CSV** to save the layout. The CSV has a `Row` column and columns
    `1`–`12`, followed by eight rows (`A`–`H`). Water is exported as `Water`; empty
-   and excluded wells are exported as `Unused`.
+   and excluded wells are exported as `Unused`. Custom marks retain their full text.
 
-**Reset well selection** restores the default water perimeter. It keeps your
-seed, labels and counts. Editing settings clears the generated layout so that
-an outdated plate cannot be exported. Settings are not saved between app sessions;
-keep your label list and seed alongside the exported CSV.
+### Editing a generated plate
+
+You can add water or custom marks to empty wells, or leave them explicitly blank,
+without clearing the layout or moving samples. You can also toggle automatic
+water filling after generation. Water added automatically is not a reservation
+for the next randomization; water you mark manually is.
+
+Assigned sample wells are protected from accidental edits. Use **Clear layout**
+to remove sample assignments before changing those wells. This keeps your manual
+water, blank and custom selections. **Add water perimeter** also preserves any
+existing samples, custom marks and explicitly blank wells on the edge.
+
+**Reset all wells to available** clears the layout and all well marks, and turns
+off automatic water filling. It keeps your seed, labels and replicate counts.
+Changing the seed or sample list clears the generated layout. Clicking
+**Randomize plate** again uses the current manual reservations and may move samples.
+
+Settings are not saved between sessions. Keep your sample list, seed, selections
+and app version alongside the exported CSV. The CSV records the final plate,
+including manual edits made after randomization.
 
 ## Placement rules and limits
 
-The default water perimeter is rows **A and H**, plus columns **1 and 12**.
-Sampling uses the original script's three column groups: **2–4**, **5–7**, and
-**8–11**. Columns 1 and 12 are always outside the sampling area, even if they are
-not water. Rows A and H within columns 2–11 can be made available.
+The app starts with **all 96 wells available**, without a water border. The optional
+**Add water perimeter** button marks rows **A and H**, plus columns **1 and 12**.
+Every well, including corners, can hold a sample, water, a custom mark or remain
+blank. Available wells are not guaranteed to receive a sample; surplus wells
+are `Unused`, or `Water` when automatic filling is enabled.
+
+Sampling uses three column groups: **1–4**, **5–7**, and **8–12**. The outer groups
+include the border columns; the existing interior group boundaries are preserved.
+Version 1.2 changes the starting sample list and removes the automatic water border.
+To recreate an older layout, restore its original sample list and well selections.
 
 For each sample:
 
 - The count must be **1–8** and cannot exceed the number of available rows.
-  With the default perimeter, only six rows are available, so the maximum is six.
+  With a complete water perimeter, only six rows are available, so the maximum is six.
 - Every replicate occupies a **different row**.
 - Counts in the three column groups differ by at most one. Three replicates
   means one per group; five means a distribution of 2, 2, and 1.
@@ -129,6 +157,8 @@ For each sample:
 
 Excluding a well does **not** lock a previous sample into that well. There is no
 fixed-sample placement feature. `Water` and `Unused` are reserved labels.
+Custom marks do not count as sample replicates and cannot match sample names
+or the status labels `Water`, `Unused`, `Available` or `Excluded` (case-insensitive).
 
 A design may be impossible even when enough wells remain, because the row and
 column-group rules also need to be satisfied. A bounded search stops difficult
@@ -138,7 +168,8 @@ free more wells, or reduce replicate counts.
 
 The algorithm is a seeded constraint search, **not uniform sampling of all valid
 layouts**. Keep the same seed, sample order, labels, counts, water/excluded wells,
-app version and Python version to reproduce a layout. The same seed alone is not
+custom reservations, water-fill setting, app version and Python version to reproduce
+a layout. Post-generation manual edits must also be repeated. The same seed alone is not
 sufficient. Version 1.0 uses an updated algorithm and will not reproduce the
 older prototype's exact layout.
 

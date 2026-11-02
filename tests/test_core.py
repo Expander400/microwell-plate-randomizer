@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from collections import Counter
 from pathlib import Path
+from unittest.mock import patch
 
 from microwell_plate_randomizer.core import (
     DEFAULT_LABELS, GROUPS, ROWS, SAMPLE_WELLS, WELLS, SearchLimitError,
@@ -48,6 +49,26 @@ class RandomizationTests(unittest.TestCase):
         args = (20539, {'A': 1, 'B': 2, 'C': 3, 'D': 5}, default_water(), set())
         self.assertEqual(randomize_plate(*args), randomize_plate(*args))
         self.assertNotEqual(randomize_plate(*args), randomize_plate(7, *args[1:]))
+
+    def test_default_layout_matches_original_groups(self):
+        samples = dict.fromkeys(DEFAULT_LABELS, 3)
+        for seed in (0, 42, 20539):
+            current = randomize_plate(seed, samples, default_water(), set())
+            with patch('microwell_plate_randomizer.core.GROUPS',
+                       (range(2, 5), range(5, 8), range(8, 12))):
+                previous = randomize_plate(seed, samples, default_water(), set())
+            self.assertEqual(current, previous)
+
+    def test_border_and_corner_wells_receive_samples(self):
+        # Force assignments into both outer columns, including corner wells.
+        for available in ({('A', 1), ('B', 5), ('H', 12)},
+                          {('H', 1), ('B', 5), ('A', 12)},
+                          {('C', 1), ('B', 5), ('D', 12)}):
+            excluded = set(WELLS) - available
+            samples = {'Sample': 3}
+            plate = randomize_plate(20539, samples, set(), excluded)
+            self.assert_layout(plate, samples, set(), excluded)
+            self.assertTrue(all(plate[well] == 'Sample' for well in available))
 
     def test_all_counts_and_selected_wells(self):
         samples = {f'Sample {count}': count for count in range(1, 9)}
@@ -106,8 +127,52 @@ class RandomizationTests(unittest.TestCase):
         randomize_plate(1, samples, water, excluded)
         self.assertEqual((samples, water, excluded), original)
 
+    def test_custom_reservations_and_automatic_water(self):
+        samples = {'Sample A': 3, 'Sample B': 2}
+        water, excluded = {('A', 1)}, {('A', 2)}
+        marks = {('A', 3): 'Positive control', ('B', 1): 'Reference'}
+        plain = randomize_plate(20539, samples, water, excluded, custom_marks=marks)
+        filled = randomize_plate(20539, samples, water, excluded, custom_marks=marks, fill_unused=True)
+        self.assertEqual(marks, {('A', 3): 'Positive control', ('B', 1): 'Reference'})
+        for well in WELLS:
+            expected = 'Water' if plain[well] == 'Unused' and well not in excluded else plain[well]
+            self.assertEqual(filled[well], expected)
+        for well, label in marks.items():
+            self.assertEqual(filled[well], label)
+        for label, count in samples.items():
+            self.assertEqual(list(filled.values()).count(label), count)
+
+    def test_custom_marks_reject_invalid_labels_and_selections(self):
+        for marks in ({('A', 1): ''}, {('A', 1): 'water'}, {('A', 1): 'sample a'},
+                      {('A', 1): 'line\nbreak'}, {('Z', 1): 'Control'}):
+            with self.subTest(marks=marks), self.assertRaises(ValueError):
+                randomize_plate(1, {'Sample A': 1}, set(), set(), custom_marks=marks)
+        for water, excluded in [({('A', 1)}, set()), (set(), {('A', 1)})]:
+            with self.assertRaises(ValueError):
+                randomize_plate(1, {'Sample A': 1}, water, excluded, custom_marks={('A', 1): 'Control'})
+
+    def test_reserved_wells_reduce_capacity(self):
+        marks = {well: 'Reserved' for well in WELLS}
+        with self.assertRaisesRegex(ValueError, 'only 0'):
+            randomize_plate(1, {'Sample A': 1}, set(), set(), custom_marks=marks)
+
 
 class CsvTests(unittest.TestCase):
+    def test_border_samples_water_and_blanks_export(self):
+        available = {('B', 1), ('C', 5), ('D', 12)}
+        water = {('A', 12), ('H', 1)}
+        excluded = set(WELLS) - available - water
+        plate = randomize_plate(1, {'Sample': 3}, water, excluded)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'plate.csv'
+            export_csv(path, plate)
+            with path.open(encoding='utf-8-sig', newline='') as source:
+                rows = list(csv.reader(source))
+        for well in available | water | {('A', 1), ('H', 12)}:
+            row, col = well
+            expected = 'Sample' if well in available else 'Water' if well in water else 'Unused'
+            self.assertEqual(rows[ROWS.index(row) + 1][col], expected)
+
     def test_round_trip_unicode_commas_and_quotes(self):
         samples = {'α, "sample"': 3}
         plate = randomize_plate(1, samples, default_water(), {('B', 2)})

@@ -5,8 +5,8 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from .core import (COLUMNS, DEFAULT_LABELS, ROWS, SAMPLE_WELLS, default_water,
-                   export_csv, parse_samples, randomize_plate)
+from .core import (COLUMNS, DEFAULT_LABELS, ROWS, WELLS, default_water,
+                   export_csv, parse_samples, randomize_plate, validate_custom_marks)
 
 
 class App(tk.Tk):
@@ -15,8 +15,12 @@ class App(tk.Tk):
         self.title("Microwell Plate Randomizer")
         self.seed = tk.StringVar(value="20539")
         self.mode = tk.StringVar(value="water")
-        self.water = default_water()
+        self.water = set()
         self.excluded = set()
+        self.custom_marks = {}
+        self.custom_text = tk.StringVar(value="Control")
+        self.fill_unused = tk.BooleanVar(value=False)
+        self.sample_wells = set()
         self.result = None
         self.buttons = {}
         self.revision = 0
@@ -43,7 +47,7 @@ class App(tk.Tk):
         canvas.create_window((0, 0), window=body, anchor="nw")
         body.bind("<Configure>", lambda _event: canvas.configure(scrollregion=canvas.bbox("all")))
         ttk.Label(body, text="Microwell Plate Randomizer", font=("TkDefaultFont", 16, "bold")).grid(row=0, column=0, columnspan=2, sticky="w")
-        ttk.Label(body, text="Replicates use different rows and are spread evenly across column groups 2–4, 5–7 and 8–11.").grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 12))
+        ttk.Label(body, text="Replicates use different rows and are spread evenly across column groups 1–4, 5–7 and 8–12.").grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 12))
         left = ttk.Frame(body)
         left.grid(row=2, column=0, sticky="nw", padx=(0, 16))
         ttk.Label(left, text="Seed (whole number)").pack(anchor="w")
@@ -51,7 +55,7 @@ class App(tk.Tk):
         ttk.Label(left, text="Sample, replicates (one per line)").pack(anchor="w")
         editor = ttk.Frame(left)
         editor.pack(fill="x", pady=(2, 4))
-        self.labels = tk.Text(editor, width=24, height=15, undo=True, wrap="none")
+        self.labels = tk.Text(editor, width=24, height=9, undo=True, wrap="none")
         self.labels.pack(side="left", fill="both", expand=True)
         scrollbar = ttk.Scrollbar(editor, command=self.labels.yview)
         scrollbar.pack(side="right", fill="y")
@@ -59,11 +63,15 @@ class App(tk.Tk):
         self.labels.insert("1.0", "\n".join(f"{label}, 3" for label in DEFAULT_LABELS))
         self.labels.edit_modified(False)
         self.labels.bind("<<Modified>>", self.labels_changed)
-        ttk.Label(left, text="Example: LB-A, 3\n1–8 replicates; one per available row.").pack(anchor="w", pady=(0, 10))
+        ttk.Label(left, text="Example: Sample A, 3\n1–8 replicates; one per available row.").pack(anchor="w", pady=(0, 10))
         ttk.Label(left, text="Click wells to mark as:").pack(anchor="w")
-        for text, value in [("Water", "water"), ("Do not randomize", "excluded"), ("Available", "available")]:
+        for text, value in [("Water", "water"), ("Do not randomize (blank)", "excluded"), ("Available", "available"), ("Custom mark", "custom")]:
             ttk.Radiobutton(left, text=text, variable=self.mode, value=value).pack(anchor="w")
-        ttk.Button(left, text="Reset well selection", command=self.reset).pack(fill="x", pady=(10, 0))
+        ttk.Entry(left, textvariable=self.custom_text, width=24).pack(fill="x", pady=(2, 4))
+        ttk.Label(left, text="Custom marks reserve wells from sampling.").pack(anchor="w")
+        ttk.Checkbutton(left, text="Fill unused wells with water", variable=self.fill_unused).pack(anchor="w", pady=(10, 4))
+        ttk.Button(left, text="Add water perimeter", command=self.add_water_perimeter).pack(fill="x", pady=(4, 0))
+        ttk.Button(left, text="Reset all wells to available", command=self.reset).pack(fill="x", pady=(4, 0))
         plate = ttk.Frame(body)
         plate.grid(row=2, column=1, sticky="nw")
         for col in COLUMNS:
@@ -80,15 +88,17 @@ class App(tk.Tk):
                 button.bind("<FocusIn>", lambda _event, w=well: self.describe_well(w))
                 self.buttons[well] = button
         ttk.Label(plate, textvariable=self.well_detail, wraplength=780).grid(row=9, column=0, columnspan=13, sticky="w", pady=(8, 4))
-        ttk.Label(plate, text="Columns 1 and 12 are outside the sampling groups.\nExcluded wells stay empty; they do not preserve a previous sample.\nBlue = water · Gray = excluded/outside groups · Green = assigned sample", wraplength=780).grid(row=10, column=0, columnspan=13, sticky="w")
+        ttk.Label(plate, text="Mark empty wells after randomization without moving samples.\nAssigned sample wells are protected; use Clear layout to edit them.\nBlue = water · Gray = excluded · Green = sample · Yellow = custom mark", wraplength=780).grid(row=10, column=0, columnspan=13, sticky="w")
         actions = ttk.Frame(body)
         actions.grid(row=3, column=0, columnspan=2, sticky="w", pady=(12, 8))
         self.generate_button = ttk.Button(actions, text="Randomize plate", command=self.generate)
         self.generate_button.pack(side="left", padx=(0, 8))
         self.export_button = ttk.Button(actions, text="Export CSV", command=self.export, state="disabled")
         self.export_button.pack(side="left")
+        ttk.Button(actions, text="Clear layout", command=self.clear_layout).pack(side="left", padx=(8, 0))
         ttk.Label(body, textvariable=self.status, wraplength=1000).grid(row=4, column=0, columnspan=2, sticky="w")
         self.seed.trace_add("write", lambda *_: self.invalidate())
+        self.fill_unused.trace_add("write", lambda *_: self.marks_changed())
         self.update_idletasks()
         width = min(body.winfo_reqwidth() + 24, self.winfo_screenwidth() - 80)
         height = min(body.winfo_reqheight() + 24, self.winfo_screenheight() - 100)
@@ -103,40 +113,84 @@ class App(tk.Tk):
         self.revision += 1
         had_result = self.result is not None
         self.result = None
+        self.sample_wells.clear()
         self.export_button.configure(state="disabled")
         if had_result or self.busy:
             self.status.set("Settings changed. Randomize again before exporting.")
         self.refresh()
 
     def set_well(self, well):
-        if self.mode.get() == "available" and well not in SAMPLE_WELLS:
-            self.status.set("Columns 1 and 12 are outside the sampling groups. Use columns 2–11 for samples.")
+        if self.labels.edit_modified():
+            self.labels_changed(None)
+        if well in self.sample_wells:
+            self.status.set("This well contains an assigned sample. Use Clear layout before changing it.")
             return
+        label = self.custom_text.get().strip()
+        if self.mode.get() == "custom":
+            try:
+                samples = parse_samples(self.labels.get("1.0", "end"))
+                validate_custom_marks({well: label}, samples)
+            except ValueError as exc:
+                messagebox.showerror("Cannot mark well", str(exc), parent=self)
+                return
         self.water.discard(well)
         self.excluded.discard(well)
+        self.custom_marks.pop(well, None)
         if self.mode.get() == "water":
             self.water.add(well)
         elif self.mode.get() == "excluded":
             self.excluded.add(well)
-        self.invalidate()
+        elif self.mode.get() == "custom":
+            self.custom_marks[well] = label
+        self.marks_changed()
         self.describe_well(well)
 
-    def reset(self):
-        self.water = default_water()
-        self.excluded.clear()
+    def marks_changed(self):
+        """Update non-sample wells without discarding a completed layout."""
+        self.revision += 1
+        if self.result is not None:
+            for well in WELLS:
+                if well not in self.sample_wells:
+                    self.result[well] = (
+                        "Water" if well in self.water else self.custom_marks[well] if well in self.custom_marks
+                        else "Unused" if well in self.excluded else "Water" if self.fill_unused.get() else "Unused"
+                    )
+            self.status.set("Well marks updated; sample positions are unchanged. Export to save the plate.")
+        elif self.busy:
+            self.status.set("Settings changed. Randomize again when the current search finishes.")
+        else:
+            self.status.set("Well selections updated. Randomize to place samples.")
+        self.refresh()
+
+    def add_water_perimeter(self):
+        for well in default_water():
+            if well not in self.sample_wells and well not in self.custom_marks and well not in self.excluded:
+                self.water.add(well)
+        self.marks_changed()
+        self.status.set("Added perimeter water. Assigned samples, excluded wells and custom marks were kept.")
+
+    def clear_layout(self):
         self.invalidate()
-        self.status.set("Restored the water perimeter and cleared excluded wells.")
+        self.status.set("Layout cleared. Edit any well, then randomize again.")
+
+    def reset(self):
+        self.water.clear()
+        self.excluded.clear()
+        self.custom_marks.clear()
+        self.invalidate()
+        self.fill_unused.set(False)
+        self.status.set("All wells are available. Seed and sample labels were kept.")
 
     def well_display(self, well):
         if well in self.water:
             return "Water", "#cce8f6"
         if well in self.excluded:
             return "Excluded", "#e1e3e5"
-        if well not in SAMPLE_WELLS:
-            return "Outside groups", "#e1e3e5"
+        if well in self.custom_marks:
+            return self.custom_marks[well], "#fff0b8"
         if self.result is not None:
             value = self.result[well]
-            return value, "#ffffff" if value == "Unused" else "#d8eedb"
+            return value, "#ffffff" if value == "Unused" else "#cce8f6" if value == "Water" else "#d8eedb"
         return "Available", "#ffffff"
 
     def describe_well(self, well):
@@ -168,13 +222,15 @@ class App(tk.Tk):
         self.invalidate()
         revision = self.revision
         water, excluded = self.water.copy(), self.excluded.copy()
+        custom_marks, fill_unused = self.custom_marks.copy(), self.fill_unused.get()
         self.busy = True
         self.generate_button.configure(state="disabled")
         self.status.set("Finding a plate layout…")
 
         def work():
             try:
-                result = randomize_plate(seed, samples, water, excluded)
+                result = randomize_plate(seed, samples, water, excluded,
+                                         custom_marks=custom_marks, fill_unused=fill_unused)
                 error = None
             except Exception as exc:
                 result, error = None, exc
@@ -199,6 +255,7 @@ class App(tk.Tk):
             messagebox.showerror("Cannot randomize", str(error), parent=self)
             return
         self.result = result
+        self.sample_wells = {well for well, value in result.items() if value in samples}
         self.export_button.configure(state="normal")
         self.refresh()
         self.status.set(f"Generated {sum(samples.values())} wells for {len(samples)} samples with seed {seed}. Export to save the plate.")
