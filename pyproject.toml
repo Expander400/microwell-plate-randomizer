@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "microwell-plate-randomizer"
+version = "1.0.0"
+description = "A simple desktop GUI for reproducible 96-well plate layouts"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = []
+keywords = ["microplate", "96-well", "randomization", "tkinter"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering",
+]
+
+[project.scripts]
+plate-randomizer = "microwell_plate_randomizer.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["microwell_plate_randomizer*"]

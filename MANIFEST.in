@@ -1,0 +1,11 @@
+include plate_randomizer_gui.py
+include start_windows.bat start_mac_linux.command
+include CHANGELOG.md CONTRIBUTING.md
+include .gitignore .gitattributes
+recursive-include docs *.md *.png
+recursive-include examples *.py *.txt
+recursive-include tests *.py
+recursive-include tools *.py
+recursive-include .github *.yml
+exclude docs/PUBLISHING.md
+exclude examples/original_randomizer.py

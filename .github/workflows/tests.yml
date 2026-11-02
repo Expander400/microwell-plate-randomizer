@@ -1,0 +1,53 @@
+name: Tests
+
+on: [push, pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ['3.10', '3.14']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Core tests
+        run: python -m unittest discover -s tests -p test_core.py -v
+      - name: Startup tests
+        run: python -m unittest discover -s tests -p test_startup.py -v
+      - name: Install package
+        run: python -m pip install .
+      - name: Installed command
+        run: plate-randomizer --version
+
+  gui-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - name: Install virtual display and Tk
+        run: sudo apt-get update && sudo apt-get install -y xvfb python3-tk
+      - name: Verify display and Tk
+        run: xvfb-run -a python plate_randomizer_gui.py --check
+      - name: All tests including GUI
+        run: xvfb-run -a python -m unittest discover -s tests -v
+      - name: Build distributions
+        run: |
+          python -m pip install build
+          python -m build
+          python tools/build_source_archive.py
+      - name: Check wheel outside source tree
+        shell: bash
+        run: |
+          python -m pip install dist/*.whl
+          cd "$RUNNER_TEMP"
+          plate-randomizer --version
